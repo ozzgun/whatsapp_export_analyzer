@@ -8,23 +8,24 @@
 #include <vector>
 #include <map>
 #include <codecvt>
+#include <filesystem>
 
 namespace
 {
-    enum msgStatus
+    typedef enum msgStatus
     {
         STATUS_UPDATED,
         STATUS_NEW_ENTRY,
         STATUS_IGNORE
-    };
+    }msgStatus;
 
-    enum msgType
+    typedef enum msgType
     {
         TYPE_NORMAL,
         TYPE_LINK,
         TYPE_MEDIA,
         TYPE_IGNORE
-    };
+    }msgType;
 
     typedef struct msgDetails
     {
@@ -56,10 +57,10 @@ namespace
 
         }
     }stats;
-    
-    using svec          = std::vector<std::string>;
+
+    using svec = std::vector<std::string>;
     using msgDetailsVec = std::vector<msgDetails>;
-    using usrStatMap    = std::map<std::string, std::map<int, stats>>; //usr - year > <data>
+    using usrStatMap = std::map<std::string, std::map<int, stats>>; //usr - year > <data>
 }
 
 namespace
@@ -76,6 +77,19 @@ namespace
 
     }
 
+    msgType get_msg_type_name(std::string name)
+    {
+        if (is_string_found(name, " added ") ||
+            is_string_found(name, " left"))
+        {
+            std::cout << "Ignoring '" << name << "' as a user. The user name should not contain following patterns:" << std::endl;
+            std::cout << "' left'" << std::endl << "' added '" << std::endl;
+            return TYPE_IGNORE;
+        }
+
+        return TYPE_NORMAL;
+    }
+
     msgType get_msg_type(std::string content)
     {
         if (is_string_found(content, "Media omitted"))
@@ -86,12 +100,13 @@ namespace
         {
             return TYPE_LINK;
         }
-        else if (is_string_found(content, "You blocked this contact")       ||
-                 is_string_found(content, "You unblocked this contact")     ||
-                 is_string_found(content, "You created group \"")           ||
+        else if (is_string_found(content, "You blocked this contact") ||
+                 is_string_found(content, "You unblocked this contact") ||
+                 is_string_found(content, "You created group \"") ||
                  is_string_found(content, " changed the group description") ||
-                 is_string_found(content, " started a video call")          ||
-                 is_string_found(content, " started a voice call")          ||
+                 is_string_found(content, " started a video call") ||
+                 is_string_found(content, " started a voice call") ||
+                 is_string_found(content, " changed this group's icon") ||
                  is_string_found(content, "Messages and calls are end-to-end encrypted."))
         {
             return TYPE_IGNORE;
@@ -136,18 +151,19 @@ namespace
 
             std::string name = name_and_content[0];
             std::string content = name_and_content[1];
-            msgType     msg_type = get_msg_type(content);
+            msgType     msg_type_c = get_msg_type(content);
+            msgType     msg_type_n = get_msg_type_name(name);
 
-            if (msg_type == TYPE_IGNORE)
+            if (msg_type_c == TYPE_IGNORE || msg_type_n == TYPE_IGNORE)
             {
                 return STATUS_IGNORE;
             }
 
             msgDetails tmp_msg(std::atoi(results[1].str().c_str()),
-                               std::atoi(results[2].str().c_str()),
-                               std::atoi(results[3].str().c_str()),
-                               std::atoi(results[4].str().c_str()),
-                               name, content, msg_type);
+                std::atoi(results[2].str().c_str()),
+                std::atoi(results[3].str().c_str()),
+                std::atoi(results[4].str().c_str()),
+                name, content, msg_type_c);
 
             all_messages.push_back(tmp_msg);
             return STATUS_NEW_ENTRY;
@@ -159,7 +175,7 @@ namespace
                 std::cout << "Export started not on a common format. Ignoring the message: " << msg;
                 return STATUS_IGNORE;
             }
-
+            //If messages printed with new lines, we append them to the last message
             const auto new_msg_typ = get_msg_type(msg);
             if (new_msg_typ != TYPE_NORMAL)
             {
@@ -179,8 +195,8 @@ namespace
         std::string usr_name = msg_detail.usr_name;
         if (status == STATUS_UPDATED)
         {
-            if      (TYPE_MEDIA == msg_detail.content_type) all_stats[usr_name][year].n_media++;
-            else if (TYPE_LINK  == msg_detail.content_type) all_stats[usr_name][year].n_links++;
+            if (TYPE_MEDIA == msg_detail.content_type) all_stats[usr_name][year].n_media++;
+            else if (TYPE_LINK == msg_detail.content_type) all_stats[usr_name][year].n_links++;
         }
         else
         {
@@ -192,8 +208,8 @@ namespace
 
             all_stats[usr_name][year].nr_of_talked_days = (int)all_stats[usr_name][year].messages_per_day.size();
 
-            if      (TYPE_MEDIA == msg_detail.content_type) all_stats[usr_name][year].n_media++;
-            else if (TYPE_LINK  == msg_detail.content_type) all_stats[usr_name][year].n_links++;
+            if (TYPE_MEDIA == msg_detail.content_type) all_stats[usr_name][year].n_media++;
+            else if (TYPE_LINK == msg_detail.content_type) all_stats[usr_name][year].n_links++;
         }
     }
 
@@ -209,10 +225,10 @@ int main(const int argc, const char* argv[])
 {
     if (argc < 2)
     {
-        std::cout << "This program must have at least input.\n"\
-                     "First input must be full path to a whatsapp export message file.\n"\
-                     "An optional output path can be given as input. Otherwise current working dierctory will be used.\n"\
-                     "<name>_whatsapp_analysis will be appened to output path to save results";
+        std::cout << "This program must have at least an input.\n"\
+            "First input must be full path to a whatsapp export message file.\n"\
+            "An optional output path can be given as input. Otherwise current working dierctory will be used.\n"\
+            "<name>_whatsapp_analysis will be appened to output path to save results";
         return -1;
     }
 
@@ -220,11 +236,11 @@ int main(const int argc, const char* argv[])
     usrStatMap    all_stats;
 
     std::string line;
-    std::string chat_path   = argv[1];
-    std::string export_path = argc == 3 ? argv[2] : "";
+    std::filesystem::path chat_path(argv[1]);
+    std::filesystem::path export_path = argc == 3 ? argv[2] : "";
 
     std::ifstream chat_file(chat_path);
-    if(chat_file.is_open())
+    if (chat_file.is_open())
     {
         while (std::getline(chat_file, line))
         {
@@ -235,12 +251,20 @@ int main(const int argc, const char* argv[])
             }
         }
     }
+    else
+    {
+        std::cout << "The file: " << chat_path << " could not be opened." << std::endl;
+        std::cerr << "Error: " << std::strerror(errno) << std::endl;
+        return -1;
+    }
 
     //Export statistics
     {
         for (const auto person : all_stats)
         {
-            std::string export_person_path = export_path + person.first + "_whatsapp_analysis" + ".csv";
+            std::filesystem::path export_person_path = export_path / (person.first + "_whatsapp_analysis" + ".csv");
+            std::cout << "File created: " << export_person_path << std::endl;
+
             std::ofstream export_file(export_person_path);
 
             if (export_file.is_open())
@@ -254,12 +278,12 @@ int main(const int argc, const char* argv[])
                     export_file << std::endl << "The data showns for year: " << year.first << std::endl << std::endl;
 
                     const auto buf = year.second;
-                    export_file << "Name;"                    << person.first          << std::endl;
-                    export_file << "Total sent messages;"     << buf.total_messages    << std::endl;
-                    export_file << "Number of talked days;"   << buf.nr_of_talked_days << std::endl;
+                    export_file << "Name;" << person.first << std::endl;
+                    export_file << "Total sent messages;" << buf.total_messages << std::endl;
+                    export_file << "Number of talked days;" << buf.nr_of_talked_days << std::endl;
                     export_file << "Average message per day;" << round(buf.total_messages / buf.nr_of_talked_days) << std::endl;
-                    export_file << "Number of media shared;"  << buf.n_media << std::endl;
-                    export_file << "Number of links shared;"  << buf.n_links << std::endl;
+                    export_file << "Number of media shared;" << buf.n_media << std::endl;
+                    export_file << "Number of links shared;" << buf.n_links << std::endl;
 
                     export_file << std::endl << "Messages Per Day Hours" << std::endl;
                     for (const auto hours : buf.hourly_msg)
@@ -278,6 +302,6 @@ int main(const int argc, const char* argv[])
             export_file.close();
         }
     }
-    
+
     return 0;
 }
